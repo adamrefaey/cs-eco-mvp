@@ -12,15 +12,15 @@ const users = [
   {
     id: '1',
     email: 'admin@lumanagi.com',
-    password: '$2a$10$8K1p/A0dygxRkLv7P8/Yl.YwLbgYABLcXGnCqGqYfBSY5HP.M4nOG', // 'demo123'
+    password: '$2a$10$AYh.miNYoHy.7xDMXVXqbOKWh62ZqVREmrg1tuR6Ho8B8obUHKb06', // 'demo123'
     full_name: 'Admin User',
     role: 'admin',
     created_at: new Date().toISOString()
   },
   {
-    id: '2', 
+    id: '2',
     email: 'user@lumanagi.com',
-    password: '$2a$10$8K1p/A0dygxRkLv7P8/Yl.YwLbgYABLcXGnCqGqYfBSY5HP.M4nOG', // 'demo123'
+    password: '$2a$10$AYh.miNYoHy.7xDMXVXqbOKWh62ZqVREmrg1tuR6Ho8B8obUHKb06', // 'demo123'
     full_name: 'Regular User',
     role: 'user',
     created_at: new Date().toISOString()
@@ -30,18 +30,45 @@ const users = [
 // Refresh tokens storage (in production, use Redis or database)
 const refreshTokens = new Set();
 
+// Cookie configuration
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+  sameSite: 'strict',
+  path: '/'
+};
+
 // Generate tokens
 const generateTokens = (user) => {
-  const payload = { 
-    id: user.id, 
-    email: user.email, 
-    role: user.role 
+  const payload = {
+    id: user.id,
+    email: user.email,
+    role: user.role
   };
-  
+
   const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '15m' });
   const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
-  
+
   return { accessToken, refreshToken };
+};
+
+// Set auth cookies
+const setAuthCookies = (res, accessToken, refreshToken) => {
+  res.cookie('accessToken', accessToken, {
+    ...COOKIE_OPTIONS,
+    maxAge: 15 * 60 * 1000 // 15 minutes
+  });
+
+  res.cookie('refreshToken', refreshToken, {
+    ...COOKIE_OPTIONS,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+};
+
+// Clear auth cookies
+const clearAuthCookies = (res) => {
+  res.clearCookie('accessToken', COOKIE_OPTIONS);
+  res.clearCookie('refreshToken', COOKIE_OPTIONS);
 };
 
 // POST /api/auth/login
@@ -69,13 +96,15 @@ router.post('/login', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = user;
-    
+
     res.json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Login successful'
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -117,13 +146,15 @@ router.post('/register', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(newUser);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = newUser;
-    
+
     res.status(201).json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Registration successful'
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -134,34 +165,39 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/refresh
 router.post('/refresh', (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken || !refreshTokens.has(refreshToken)) {
+      clearAuthCookies(res);
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
 
     // Verify refresh token
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    
+
     // Find user
     const user = users.find(u => u.id === decoded.id);
     if (!user) {
+      clearAuthCookies(res);
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Generate new access token
+    // Generate new tokens
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
-    
+
     // Remove old refresh token and add new one
     refreshTokens.delete(refreshToken);
     refreshTokens.add(newRefreshToken);
 
+    // Set new cookies
+    setAuthCookies(res, accessToken, newRefreshToken);
+
     res.json({
-      accessToken,
-      refreshToken: newRefreshToken
+      message: 'Token refreshed successfully'
     });
   } catch (error) {
     console.error('Token refresh error:', error);
+    clearAuthCookies(res);
     res.status(401).json({ error: 'Invalid refresh token' });
   }
 });
@@ -169,15 +205,19 @@ router.post('/refresh', (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    
+    const refreshToken = req.cookies.refreshToken;
+
     if (refreshToken) {
       refreshTokens.delete(refreshToken);
     }
-    
+
+    // Clear cookies
+    clearAuthCookies(res);
+
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
     console.error('Logout error:', error);
+    clearAuthCookies(res);
     res.status(500).json({ error: 'Logout failed' });
   }
 });
@@ -239,13 +279,15 @@ router.post('/google', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = user;
-    
+
     res.json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Google authentication successful'
     });
   } catch (error) {
     console.error('Google authentication error:', error);
@@ -256,15 +298,14 @@ router.post('/google', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const accessToken = req.cookies.accessToken;
+
+    if (!accessToken) {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+    const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
+
     // Find user
     const user = users.find(u => u.id === decoded.id);
     if (!user) {

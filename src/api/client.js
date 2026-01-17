@@ -4,22 +4,20 @@ import { authService } from './auth.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
-// Create axios instance
+// Create axios instance with cookie support
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Important: sends cookies with requests
 });
 
-// Request interceptor to add auth token
+// Request interceptor (no longer needs to add auth token - cookies handle it)
 axiosInstance.interceptors.request.use(
   (config) => {
-    const token = authService.getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
+    // Cookies are automatically included with withCredentials: true
     return config;
   },
   (error) => {
@@ -35,13 +33,14 @@ axiosInstance.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      
+
       try {
+        // Call refresh endpoint - cookies are automatically sent and updated
         await authService.refreshAccessToken();
-        const newToken = authService.getToken();
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        // Retry the original request - new cookies will be used automatically
         return axiosInstance(originalRequest);
       } catch (refreshError) {
+        // Refresh failed - clear auth and redirect to login
         authService.clearAuth();
         window.location.href = '/login';
         return Promise.reject(refreshError);

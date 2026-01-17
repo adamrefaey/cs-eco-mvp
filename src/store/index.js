@@ -1,23 +1,19 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Authentication store
+// Authentication store (using httpOnly cookies for tokens)
 export const useAuthStore = create(
   persist(
     (set, get) => ({
-      // State
+      // State (only user data, tokens are in httpOnly cookies)
       user: null,
-      token: null,
-      refreshToken: null,
       isAuthenticated: false,
       isLoading: false,
 
       // Actions
-      login: (userData, tokens) => {
+      login: (userData) => {
         set({
           user: userData,
-          token: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
           isAuthenticated: true,
         });
       },
@@ -25,8 +21,6 @@ export const useAuthStore = create(
       logout: () => {
         set({
           user: null,
-          token: null,
-          refreshToken: null,
           isAuthenticated: false,
         });
       },
@@ -35,30 +29,19 @@ export const useAuthStore = create(
         set({ user: userData });
       },
 
-      updateTokens: (tokens) => {
-        set({
-          token: tokens.accessToken,
-          refreshToken: tokens.refreshToken || get().refreshToken,
-        });
-      },
-
       setLoading: (loading) => {
         set({ isLoading: loading });
       },
 
-      // Initialize from localStorage
+      // Initialize from localStorage (only user data)
       initialize: () => {
-        const token = localStorage.getItem('access_token');
-        const refreshToken = localStorage.getItem('refresh_token');
         const userData = localStorage.getItem('user');
 
-        if (token && userData) {
+        if (userData) {
           try {
             const user = JSON.parse(userData);
             set({
               user,
-              token,
-              refreshToken,
               isAuthenticated: true,
             });
           } catch (error) {
@@ -72,8 +55,6 @@ export const useAuthStore = create(
       name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
-        token: state.token,
-        refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
       }),
     }

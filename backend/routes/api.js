@@ -2,18 +2,16 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 
-// Middleware to verify JWT token
+// Middleware to verify JWT token from cookies
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const accessToken = req.cookies.accessToken;
+
+  if (!accessToken) {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  const token = authHeader.substring(7);
-  
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (error) {

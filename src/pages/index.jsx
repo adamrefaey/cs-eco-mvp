@@ -129,17 +129,17 @@ function _getCurrentPage(url) {
 // Protected Route Component
 function ProtectedRoute({ children }) {
     const [isAuthenticated, setIsAuthenticated] = useState(null);
-    
+
     useEffect(() => {
         const checkAuth = () => {
-            const token = localStorage.getItem('access_token');
-            const user = localStorage.getItem('user');
-            setIsAuthenticated(!!token && !!user);
+            // Check if user is authenticated (tokens are in httpOnly cookies)
+            const isAuth = auth.isAuthenticated();
+            setIsAuthenticated(isAuth);
         };
-        
+
         checkAuth();
     }, []);
-    
+
     if (isAuthenticated === null) {
         // Loading state
         return (
