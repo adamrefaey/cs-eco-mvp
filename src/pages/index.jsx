@@ -57,6 +57,8 @@ import ProductionMigrationGuide from "./ProductionMigrationGuide";
 import { BrowserRouter as Router, Route, Routes, useLocation, Navigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import { auth } from '@/api/auth';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import { InlineErrorFallback } from '@/components/ErrorFallback';
 
 const PAGES = {
     Dashboard: Dashboard,
@@ -148,8 +150,26 @@ function ProtectedRoute({ children }) {
             </div>
         );
     }
-    
+
     return isAuthenticated ? children : <Navigate to="/login" replace />;
+}
+
+// Route Error Boundary Wrapper
+// Wraps individual routes with error boundaries for better isolation
+function RouteWithErrorBoundary({ children }) {
+    return (
+        <ErrorBoundary
+            fallback={({ error, resetError }) => (
+                <InlineErrorFallback
+                    error={error}
+                    resetError={resetError}
+                    title="Error loading page"
+                />
+            )}
+        >
+            {children}
+        </ErrorBoundary>
+    );
 }
 
 // Create a wrapper component that uses useLocation inside the Router context
