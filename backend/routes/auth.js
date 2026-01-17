@@ -2,6 +2,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const { validateBody } = require('../middleware/validate');
+const { loginSchema, registerSchema, googleAuthSchema } = require('../validators/auth.validator');
 const router = express.Router();
 
 // Initialize Google OAuth client
@@ -72,15 +74,11 @@ const clearAuthCookies = (res) => {
 };
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', validateBody(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Find user
+    // Find user (email is already validated and normalized to lowercase)
     const user = users.find(u => u.email === email);
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -113,21 +111,17 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/register
-router.post('/register', async (req, res) => {
+router.post('/register', validateBody(registerSchema), async (req, res) => {
   try {
     const { email, password, full_name } = req.body;
 
-    if (!email || !password || !full_name) {
-      return res.status(400).json({ error: 'Email, password, and full name are required' });
-    }
-
-    // Check if user exists
+    // Check if user exists (email is already validated and normalized)
     const existingUser = users.find(u => u.email === email);
     if (existingUser) {
       return res.status(409).json({ error: 'User already exists' });
     }
 
-    // Hash password
+    // Hash password (password is already validated for strength)
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create new user
@@ -223,27 +217,23 @@ router.post('/logout', (req, res) => {
 });
 
 // POST /api/auth/google
-router.post('/google', async (req, res) => {
+router.post('/google', validateBody(googleAuthSchema), async (req, res) => {
   try {
     const { idToken } = req.body;
 
-    if (!idToken) {
-      return res.status(400).json({ error: 'Google ID token is required' });
-    }
-
-    // Verify the Google ID token
+    // Verify the Google ID token (idToken is already validated)
     const ticket = await googleClient.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
 
     const payload = ticket.getPayload();
-    const { 
+    const {
       sub: googleId,
       email,
       name: full_name,
       picture: avatar_url,
-      email_verified 
+      email_verified
     } = payload;
 
     if (!email_verified) {
@@ -252,7 +242,7 @@ router.post('/google', async (req, res) => {
 
     // Check if user exists
     let user = users.find(u => u.email === email);
-    
+
     if (!user) {
       // Create new user from Google account
       user = {
