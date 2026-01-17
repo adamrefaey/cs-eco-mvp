@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
+const { healthCheckRateLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -23,9 +24,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+app.get('/health', healthCheckRateLimiter, (req, res) => {
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'Lumanagi Backend API'
   });

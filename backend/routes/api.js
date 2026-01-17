@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { validateQuery, validateBody, validateParams } = require('../middleware/validate');
 const { paginationSchema, sortSchema, idSchema, getEntitySchema } = require('../validators/entity.validator');
 const { z } = require('zod');
+const { authenticatedApiRateLimiter, writeOperationsRateLimiter } = require('../middleware/rateLimiter');
 const router = express.Router();
 
 // Middleware to verify JWT token from cookies
@@ -84,7 +85,7 @@ const createEntityRoutes = (entityName) => {
   });
 
   // GET /api/{entity-name} - List entities with pagination
-  router.get(`/${entityName}`, authenticateToken, validateQuery(listQuerySchema), (req, res) => {
+  router.get(`/${entityName}`, authenticatedApiRateLimiter, authenticateToken, validateQuery(listQuerySchema), (req, res) => {
     try {
       const { page, limit } = req.query; // Already validated and transformed to numbers
       const data = generateMockData(entityName, limit);
@@ -105,7 +106,7 @@ const createEntityRoutes = (entityName) => {
   });
 
   // POST /api/{entity-name} - Create new entity
-  router.post(`/${entityName}`, authenticateToken, validateBody(getEntitySchema(entityName)), (req, res) => {
+  router.post(`/${entityName}`, writeOperationsRateLimiter, authenticateToken, validateBody(getEntitySchema(entityName)), (req, res) => {
     try {
       const newItem = {
         id: Date.now().toString(),
@@ -122,7 +123,7 @@ const createEntityRoutes = (entityName) => {
   });
 
   // PUT /api/{entity-name}/:id - Update entity
-  router.put(`/${entityName}/:id`, authenticateToken, validateParams(paramSchema), validateBody(getEntitySchema(entityName).partial()), (req, res) => {
+  router.put(`/${entityName}/:id`, writeOperationsRateLimiter, authenticateToken, validateParams(paramSchema), validateBody(getEntitySchema(entityName).partial()), (req, res) => {
     try {
       const { id } = req.params; // Already validated
       const updatedItem = {
@@ -139,7 +140,7 @@ const createEntityRoutes = (entityName) => {
   });
 
   // DELETE /api/{entity-name}/:id - Delete entity
-  router.delete(`/${entityName}/:id`, authenticateToken, validateParams(paramSchema), (req, res) => {
+  router.delete(`/${entityName}/:id`, writeOperationsRateLimiter, authenticateToken, validateParams(paramSchema), (req, res) => {
     try {
       const { id } = req.params; // Already validated
       res.json({ message: `${entityName} ${id} deleted successfully` });

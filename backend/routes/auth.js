@@ -4,6 +4,11 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { validateBody } = require('../middleware/validate');
 const { loginSchema, registerSchema, googleAuthSchema } = require('../validators/auth.validator');
+const {
+  loginRateLimiter,
+  registerRateLimiter,
+  refreshTokenRateLimiter,
+} = require('../middleware/rateLimiter');
 const router = express.Router();
 
 // Initialize Google OAuth client
@@ -74,7 +79,7 @@ const clearAuthCookies = (res) => {
 };
 
 // POST /api/auth/login
-router.post('/login', validateBody(loginSchema), async (req, res) => {
+router.post('/login', loginRateLimiter, validateBody(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -111,7 +116,7 @@ router.post('/login', validateBody(loginSchema), async (req, res) => {
 });
 
 // POST /api/auth/register
-router.post('/register', validateBody(registerSchema), async (req, res) => {
+router.post('/register', registerRateLimiter, validateBody(registerSchema), async (req, res) => {
   try {
     const { email, password, full_name } = req.body;
 
@@ -157,7 +162,7 @@ router.post('/register', validateBody(registerSchema), async (req, res) => {
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', refreshTokenRateLimiter, (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
 
@@ -217,7 +222,7 @@ router.post('/logout', (req, res) => {
 });
 
 // POST /api/auth/google
-router.post('/google', validateBody(googleAuthSchema), async (req, res) => {
+router.post('/google', loginRateLimiter, validateBody(googleAuthSchema), async (req, res) => {
   try {
     const { idToken } = req.body;
 
