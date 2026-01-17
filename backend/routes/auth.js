@@ -2,6 +2,13 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const { validateBody } = require('../middleware/validate');
+const { loginSchema, registerSchema, googleAuthSchema } = require('../validators/auth.validator');
+const {
+  loginRateLimiter,
+  registerRateLimiter,
+  refreshTokenRateLimiter,
+} = require('../middleware/rateLimiter');
 const router = express.Router();
 
 // Initialize Google OAuth client
@@ -12,15 +19,15 @@ const users = [
   {
     id: '1',
     email: 'admin@lumanagi.com',
-    password: '$2a$10$8K1p/A0dygxRkLv7P8/Yl.YwLbgYABLcXGnCqGqYfBSY5HP.M4nOG', // 'demo123'
+    password: '$2a$10$AYh.miNYoHy.7xDMXVXqbOKWh62ZqVREmrg1tuR6Ho8B8obUHKb06', // 'demo123'
     full_name: 'Admin User',
     role: 'admin',
     created_at: new Date().toISOString()
   },
   {
-    id: '2', 
+    id: '2',
     email: 'user@lumanagi.com',
-    password: '$2a$10$8K1p/A0dygxRkLv7P8/Yl.YwLbgYABLcXGnCqGqYfBSY5HP.M4nOG', // 'demo123'
+    password: '$2a$10$AYh.miNYoHy.7xDMXVXqbOKWh62ZqVREmrg1tuR6Ho8B8obUHKb06', // 'demo123'
     full_name: 'Regular User',
     role: 'user',
     created_at: new Date().toISOString()
@@ -30,30 +37,53 @@ const users = [
 // Refresh tokens storage (in production, use Redis or database)
 const refreshTokens = new Set();
 
+// Cookie configuration
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+  sameSite: 'strict',
+  path: '/'
+};
+
 // Generate tokens
 const generateTokens = (user) => {
-  const payload = { 
-    id: user.id, 
-    email: user.email, 
-    role: user.role 
+  const payload = {
+    id: user.id,
+    email: user.email,
+    role: user.role
   };
-  
+
   const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '15m' });
   const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
-  
+
   return { accessToken, refreshToken };
 };
 
+// Set auth cookies
+const setAuthCookies = (res, accessToken, refreshToken) => {
+  res.cookie('accessToken', accessToken, {
+    ...COOKIE_OPTIONS,
+    maxAge: 15 * 60 * 1000 // 15 minutes
+  });
+
+  res.cookie('refreshToken', refreshToken, {
+    ...COOKIE_OPTIONS,
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+  });
+};
+
+// Clear auth cookies
+const clearAuthCookies = (res) => {
+  res.clearCookie('accessToken', COOKIE_OPTIONS);
+  res.clearCookie('refreshToken', COOKIE_OPTIONS);
+};
+
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginRateLimiter, validateBody(loginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    // Find user
+    // Find user (email is already validated and normalized to lowercase)
     const user = users.find(u => u.email === email);
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -69,13 +99,15 @@ router.post('/login', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = user;
-    
+
     res.json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Login successful'
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -84,21 +116,17 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/register
-router.post('/register', async (req, res) => {
+router.post('/register', registerRateLimiter, validateBody(registerSchema), async (req, res) => {
   try {
     const { email, password, full_name } = req.body;
 
-    if (!email || !password || !full_name) {
-      return res.status(400).json({ error: 'Email, password, and full name are required' });
-    }
-
-    // Check if user exists
+    // Check if user exists (email is already validated and normalized)
     const existingUser = users.find(u => u.email === email);
     if (existingUser) {
       return res.status(409).json({ error: 'User already exists' });
     }
 
-    // Hash password
+    // Hash password (password is already validated for strength)
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create new user
@@ -117,13 +145,15 @@ router.post('/register', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(newUser);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = newUser;
-    
+
     res.status(201).json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Registration successful'
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -132,36 +162,41 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', refreshTokenRateLimiter, (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken || !refreshTokens.has(refreshToken)) {
+      clearAuthCookies(res);
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
 
     // Verify refresh token
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    
+
     // Find user
     const user = users.find(u => u.id === decoded.id);
     if (!user) {
+      clearAuthCookies(res);
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // Generate new access token
+    // Generate new tokens
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(user);
-    
+
     // Remove old refresh token and add new one
     refreshTokens.delete(refreshToken);
     refreshTokens.add(newRefreshToken);
 
+    // Set new cookies
+    setAuthCookies(res, accessToken, newRefreshToken);
+
     res.json({
-      accessToken,
-      refreshToken: newRefreshToken
+      message: 'Token refreshed successfully'
     });
   } catch (error) {
     console.error('Token refresh error:', error);
+    clearAuthCookies(res);
     res.status(401).json({ error: 'Invalid refresh token' });
   }
 });
@@ -169,41 +204,41 @@ router.post('/refresh', (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    
+    const refreshToken = req.cookies.refreshToken;
+
     if (refreshToken) {
       refreshTokens.delete(refreshToken);
     }
-    
+
+    // Clear cookies
+    clearAuthCookies(res);
+
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
     console.error('Logout error:', error);
+    clearAuthCookies(res);
     res.status(500).json({ error: 'Logout failed' });
   }
 });
 
 // POST /api/auth/google
-router.post('/google', async (req, res) => {
+router.post('/google', loginRateLimiter, validateBody(googleAuthSchema), async (req, res) => {
   try {
     const { idToken } = req.body;
 
-    if (!idToken) {
-      return res.status(400).json({ error: 'Google ID token is required' });
-    }
-
-    // Verify the Google ID token
+    // Verify the Google ID token (idToken is already validated)
     const ticket = await googleClient.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
 
     const payload = ticket.getPayload();
-    const { 
+    const {
       sub: googleId,
       email,
       name: full_name,
       picture: avatar_url,
-      email_verified 
+      email_verified
     } = payload;
 
     if (!email_verified) {
@@ -212,7 +247,7 @@ router.post('/google', async (req, res) => {
 
     // Check if user exists
     let user = users.find(u => u.email === email);
-    
+
     if (!user) {
       // Create new user from Google account
       user = {
@@ -239,13 +274,15 @@ router.post('/google', async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user);
     refreshTokens.add(refreshToken);
 
+    // Set cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     // Return user data (without password)
     const { password: _, ...userWithoutPassword } = user;
-    
+
     res.json({
       user: userWithoutPassword,
-      accessToken,
-      refreshToken
+      message: 'Google authentication successful'
     });
   } catch (error) {
     console.error('Google authentication error:', error);
@@ -256,15 +293,14 @@ router.post('/google', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const accessToken = req.cookies.accessToken;
+
+    if (!accessToken) {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+    const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
+
     // Find user
     const user = users.find(u => u.id === decoded.id);
     if (!user) {

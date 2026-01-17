@@ -1,25 +1,11 @@
 const express = require('express');
-const jwt = require('jsonwebtoken');
+const { validateQuery, validateBody, validateParams } = require('../middleware/validate');
+const { paginationSchema, sortSchema, idSchema, getEntitySchema } = require('../validators/entity.validator');
+const { z } = require('zod');
+const { authenticatedApiRateLimiter, writeOperationsRateLimiter } = require('../middleware/rateLimiter');
+const { authenticateToken } = require('../middleware/authenticate');
+const { requireResourceAccess } = require('../middleware/authorize');
 const router = express.Router();
-
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  const token = authHeader.substring(7);
-  
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
-  }
-};
 
 // Mock data generators for demo purposes
 const generateMockData = (type, count = 10) => {
@@ -72,19 +58,29 @@ const generateMockData = (type, count = 10) => {
 
 // Generic CRUD routes for all entities
 const createEntityRoutes = (entityName) => {
-  // GET /api/{entity-name}
-  router.get(`/${entityName}`, authenticateToken, (req, res) => {
+  // Create query validation schema for this entity
+  const listQuerySchema = paginationSchema.extend({
+    sort: sortSchema,
+  });
+
+  // Create param validation schema
+  const paramSchema = z.object({
+    id: idSchema,
+  });
+
+  // GET /api/{entity-name} - List entities with pagination
+  router.get(`/${entityName}`, authenticatedApiRateLimiter, authenticateToken, requireResourceAccess(entityName), validateQuery(listQuerySchema), (req, res) => {
     try {
-      const { page = 1, limit = 10, ...filters } = req.query;
-      const data = generateMockData(entityName, parseInt(limit));
-      
+      const { page, limit } = req.query; // Already validated and transformed to numbers
+      const data = generateMockData(entityName, limit);
+
       res.json({
         data,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page,
+          limit,
           total: data.length,
-          totalPages: Math.ceil(data.length / parseInt(limit))
+          totalPages: Math.ceil(data.length / limit)
         }
       });
     } catch (error) {
@@ -93,16 +89,16 @@ const createEntityRoutes = (entityName) => {
     }
   });
 
-  // POST /api/{entity-name}
-  router.post(`/${entityName}`, authenticateToken, (req, res) => {
+  // POST /api/{entity-name} - Create new entity
+  router.post(`/${entityName}`, writeOperationsRateLimiter, authenticateToken, requireResourceAccess(entityName), validateBody(getEntitySchema(entityName)), (req, res) => {
     try {
       const newItem = {
-        id: Date.now(),
-        ...req.body,
+        id: Date.now().toString(),
+        ...req.body, // Already validated against entity schema
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
-      
+
       res.status(201).json(newItem);
     } catch (error) {
       console.error(`Create ${entityName} error:`, error);
@@ -110,16 +106,16 @@ const createEntityRoutes = (entityName) => {
     }
   });
 
-  // PUT /api/{entity-name}/:id
-  router.put(`/${entityName}/:id`, authenticateToken, (req, res) => {
+  // PUT /api/{entity-name}/:id - Update entity
+  router.put(`/${entityName}/:id`, writeOperationsRateLimiter, authenticateToken, requireResourceAccess(entityName), validateParams(paramSchema), validateBody(getEntitySchema(entityName).partial()), (req, res) => {
     try {
-      const { id } = req.params;
+      const { id } = req.params; // Already validated
       const updatedItem = {
         id,
-        ...req.body,
+        ...req.body, // Already validated (partial schema allows optional fields)
         updated_at: new Date().toISOString()
       };
-      
+
       res.json(updatedItem);
     } catch (error) {
       console.error(`Update ${entityName} error:`, error);
@@ -127,10 +123,10 @@ const createEntityRoutes = (entityName) => {
     }
   });
 
-  // DELETE /api/{entity-name}/:id
-  router.delete(`/${entityName}/:id`, authenticateToken, (req, res) => {
+  // DELETE /api/{entity-name}/:id - Delete entity
+  router.delete(`/${entityName}/:id`, writeOperationsRateLimiter, authenticateToken, requireResourceAccess(entityName), validateParams(paramSchema), (req, res) => {
     try {
-      const { id } = req.params;
+      const { id } = req.params; // Already validated
       res.json({ message: `${entityName} ${id} deleted successfully` });
     } catch (error) {
       console.error(`Delete ${entityName} error:`, error);

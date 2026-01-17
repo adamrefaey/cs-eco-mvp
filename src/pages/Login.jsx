@@ -70,34 +70,17 @@ export default function Login() {
   const handleDemoLogin = async () => {
     setLoading(true);
     setError('');
-    
-    // Demo credentials
-    setFormData({
-      email: 'admin@lumanagi.com',
-      password: 'demo123'
-    });
 
     try {
-      // In a real app, this would call the actual login endpoint
-      // For demo purposes, we'll simulate a successful login
+      // Use real authentication with demo credentials
+      const result = await auth.login('admin@lumanagi.com', 'demo123');
       setSuccess('Demo login successful! Redirecting...');
-      
-      // Store demo user data
-      const demoUser = {
-        id: '1',
-        email: 'admin@lumanagi.com',
-        full_name: 'Admin User',
-        role: 'admin',
-      };
-      
-      localStorage.setItem('access_token', 'demo_token_' + Date.now());
-      localStorage.setItem('user', JSON.stringify(demoUser));
-      
+
       setTimeout(() => {
         navigate('/dashboard');
       }, 1000);
     } catch (err) {
-      setError('Demo login failed');
+      setError(err.message || 'Demo login failed');
     } finally {
       setLoading(false);
     }

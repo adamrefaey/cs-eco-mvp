@@ -1,29 +1,26 @@
-// JWT-based authentication system replacing Base44 auth
+// JWT-based authentication system using httpOnly cookies
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
-// Create axios instance for auth (no interceptors to avoid circular dependencies)
+// Create axios instance for auth with cookie support
 const authAxios = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true, // Important: sends cookies with requests
 });
 
 class AuthService {
   constructor() {
-    this.token = null;
-    this.refreshToken = null;
     this.user = null;
     this.init();
   }
 
   init() {
-    // Load tokens from localStorage on initialization
-    this.token = localStorage.getItem('access_token');
-    this.refreshToken = localStorage.getItem('refresh_token');
+    // Load user data from localStorage (only user info, not tokens)
     const userData = localStorage.getItem('user');
     if (userData) {
       try {
@@ -43,14 +40,9 @@ class AuthService {
       });
 
       const data = response.data;
-      
-      this.token = data.accessToken;
-      this.refreshToken = data.refreshToken;
       this.user = data.user;
 
-      // Store in localStorage
-      localStorage.setItem('access_token', this.token);
-      localStorage.setItem('refresh_token', this.refreshToken);
+      // Store only user info (tokens are in httpOnly cookies)
       localStorage.setItem('user', JSON.stringify(this.user));
 
       return data;
@@ -63,7 +55,13 @@ class AuthService {
   async register(userData) {
     try {
       const response = await authAxios.post('/auth/register', userData);
-      return response.data;
+      const data = response.data;
+      this.user = data.user;
+
+      // Store only user info (tokens are in httpOnly cookies)
+      localStorage.setItem('user', JSON.stringify(this.user));
+
+      return data;
     } catch (error) {
       console.error('Registration error:', error);
       throw error.response?.data || error;
@@ -72,15 +70,8 @@ class AuthService {
 
   async logout() {
     try {
-      if (this.refreshToken) {
-        await authAxios.post('/auth/logout', {
-          refreshToken: this.refreshToken,
-        }, {
-          headers: {
-            'Authorization': `Bearer ${this.token}`,
-          },
-        });
-      }
+      // Cookies are automatically sent with the request
+      await authAxios.post('/auth/logout');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
@@ -89,21 +80,14 @@ class AuthService {
   }
 
   async me() {
-    if (!this.token) {
-      throw new Error('No access token available');
-    }
-
     try {
-      const response = await authAxios.get('/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${this.token}`,
-        },
-      });
+      // Cookies are automatically sent with the request
+      const response = await authAxios.get('/auth/me');
 
       const userData = response.data;
       this.user = userData;
       localStorage.setItem('user', JSON.stringify(this.user));
-      
+
       return userData;
     } catch (error) {
       if (error.response?.status === 401) {
@@ -116,7 +100,7 @@ class AuthService {
           throw refreshError;
         }
       }
-      
+
       console.error('Failed to fetch user:', error);
       this.clearAuth();
       throw error.response?.data || error;
@@ -124,28 +108,11 @@ class AuthService {
   }
 
   async refreshAccessToken() {
-    if (!this.refreshToken) {
-      throw new Error('No refresh token available');
-    }
-
     try {
-      const response = await authAxios.post('/auth/refresh', {
-        refreshToken: this.refreshToken,
-      });
-
-      const data = response.data;
-      
-      this.token = data.accessToken;
-      if (data.refreshToken) {
-        this.refreshToken = data.refreshToken;
-      }
-
-      localStorage.setItem('access_token', this.token);
-      if (data.refreshToken) {
-        localStorage.setItem('refresh_token', this.refreshToken);
-      }
-
-      return data;
+      // Cookies are automatically sent with the request
+      // Backend will validate refresh token cookie and set new cookies
+      const response = await authAxios.post('/auth/refresh');
+      return response.data;
     } catch (error) {
       console.error('Token refresh error:', error);
       this.clearAuth();
@@ -154,20 +121,14 @@ class AuthService {
   }
 
   clearAuth() {
-    this.token = null;
-    this.refreshToken = null;
     this.user = null;
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
+    // Note: httpOnly cookies are cleared by the server on logout
   }
 
   isAuthenticated() {
-    return !!this.token;
-  }
-
-  getToken() {
-    return this.token;
+    // Check if we have user data (tokens are in cookies)
+    return !!this.user;
   }
 
   getUser() {
@@ -185,10 +146,8 @@ export const auth = {
   logout: () => authService.logout(),
   me: () => authService.me(),
   isAuthenticated: () => authService.isAuthenticated(),
-  getToken: () => authService.getToken(),
   getUser: () => authService.getUser(),
   clearAuth: () => authService.clearAuth(),
-  authenticatedFetch: (url, options) => authService.authenticatedFetch(url, options),
 };
 
 export default authService;
